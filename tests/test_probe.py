@@ -1,6 +1,7 @@
 import pytest
 
-from scripts.baseline_probe import analyse_results, probe_once
+from scripts.baseline_probe import analyse_results
+from app.probes.http_probe import probe_once
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from threading import Thread
 
@@ -144,3 +145,32 @@ def test_timeout_is_classified():
 
     assert result["status"] is None
     assert result["failure_type"] == "timeout"
+
+
+
+def test_redirect_is_not_followed():
+    class RedirectHandler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(302)
+            self.send_header("Location", "http://example.com/")
+            self.end_headers()
+
+        def log_message(self, format, *args):
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), RedirectHandler)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    try:
+        result = probe_once(
+            f"http://127.0.0.1:{server.server_port}/redirect",
+            timeout=2,
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+    assert result["status"] == 302
+    assert result["failure_type"] == "http_error"
