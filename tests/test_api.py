@@ -22,3 +22,30 @@ def test_root_endpoint():
     assert data["service"] == "NetReliant"
     assert data["status"] == "running"
     assert "timestamp" in data
+
+
+def test_probe_rejects_external_target():
+    response = client.post(
+        "/diagnostics/probe",
+        json={"url": "http://example.com/"}
+    )
+
+    assert response.status_code == 422
+
+
+def test_probe_rejects_https_target():
+    response = client.post(
+        "/diagnostics/probe",
+        json={"url": "https://localhost/health"}
+    )
+
+    assert response.status_code == 422
+
+
+def test_probe_rejects_url_with_credentials():
+    response = client.post(
+        "/diagnostics/probe",
+        json={"url": "http://user:pass@localhost/health"}
+    )
+
+    assert response.status_code == 422
