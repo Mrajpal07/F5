@@ -9,6 +9,7 @@ from app.diagnostics.engine import diagnose_probe_result
 from app.probes.http_probe import probe_once
 from contextlib import asynccontextmanager
 from app.analytics.reliability import get_reliability_summary
+from app.analytics.anomaly import detect_latency_anomaly
 
 from app.history.store import (
     initialize_database,
@@ -139,3 +140,25 @@ def reliability_summary(
         ) from exc
 
     return summary
+
+@app.get("/diagnostics/anomaly")
+def latency_anomaly(
+    url: str,
+    baseline_limit: int = 50,
+    minimum_latency_ms: float = 100.0,
+    anomaly_multiplier: float = 2.0,
+):
+    try:
+        result = detect_latency_anomaly(
+            url,
+            baseline_limit=baseline_limit,
+            minimum_latency_ms=minimum_latency_ms,
+            anomaly_multiplier=anomaly_multiplier,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=str(exc),
+        ) from exc
+
+    return result
