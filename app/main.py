@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field, field_validator
 from app.diagnostics.engine import diagnose_probe_result
 from app.probes.http_probe import probe_once
 from contextlib import asynccontextmanager
+from app.analytics.reliability import get_reliability_summary
 
 from app.history.store import (
     initialize_database,
@@ -120,3 +121,21 @@ def probe_history(
         "count": len(records),
         "records": records,
     }
+
+@app.get("/diagnostics/reliability")
+def reliability_summary(
+    url: str,
+    window_hours: int = 24,
+):
+    try:
+        summary = get_reliability_summary(
+            url,
+            window_hours=window_hours,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=str(exc),
+        ) from exc
+
+    return summary
