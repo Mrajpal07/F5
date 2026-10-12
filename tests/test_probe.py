@@ -1,6 +1,8 @@
 import pytest
 
-from scripts.baseline_probe import analyse_results
+from scripts.baseline_probe import analyse_results, probe_once
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from threading import Thread
 
 
 def test_all_requests_successful():
@@ -46,3 +48,99 @@ def test_server_error_is_not_successful():
 def test_empty_observations_are_rejected():
     with pytest.raises(ValueError):
         analyse_results([])
+
+
+
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from threading import Thread
+
+
+def test_connection_refusal_is_classified():
+    result = probe_once("http://localhost:8999/health", timeout=1)
+
+    assert result["status"] is None
+    assert result["failure_type"] == "connection_error"
+
+
+def test_http_error_is_classified():
+    class ErrorHandler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(503)
+            self.end_headers()
+
+        def log_message(self, format, *args):
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), ErrorHandler)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    try:
+        result = probe_once(
+            f"http://127.0.0.1:{server.server_port}/health",
+            timeout=2,
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+    assert result["status"] == 503
+    assert result["failure_type"] == "http_error"
+
+
+def test_successful_response_has_no_failure_type():
+    class HealthyHandler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.end_headers()
+
+        def log_message(self, format, *args):
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), HealthyHandler)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    try:
+        result = probe_once(
+            f"http://127.0.0.1:{server.server_port}/health",
+            timeout=2,
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+    assert result["status"] == 200
+    assert result["failure_type"] is None
+
+
+def test_timeout_is_classified():
+    class SlowHandler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            import time
+
+            time.sleep(0.5)
+            self.send_response(200)
+            self.end_headers()
+
+        def log_message(self, format, *args):
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), SlowHandler)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    try:
+        result = probe_once(
+            f"http://127.0.0.1:{server.server_port}/health",
+            timeout=0.1,
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+    assert result["status"] is None
+    assert result["failure_type"] == "timeout"

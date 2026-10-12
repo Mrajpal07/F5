@@ -1,26 +1,44 @@
 import argparse
 import json
 import time
+import socket
 from datetime import datetime, timezone
 from urllib.error import HTTPError, URLError
 from urllib.request import urlopen
 
 
+
+
 def probe_once(url, timeout):
-    """Send one HTTP request and record its outcome and duration."""
+    """Send one HTTP request and classify its outcome."""
     start = time.perf_counter()
+
+    status = None
+    error = None
+    failure_type = None
 
     try:
         with urlopen(url, timeout=timeout) as response:
             status = response.status
-        error = None
+
+        if 200 <= status < 300:
+            failure_type = None
+        else:
+            failure_type = "http_error"
 
     except HTTPError as exc:
         status = exc.code
-        error = None
+        error = str(exc)
+        failure_type = "http_error"
 
-    except (URLError, TimeoutError, OSError) as exc:
-        status = None
+    except (URLError, TimeoutError, socket.timeout, OSError) as exc:
+        reason = exc.reason if isinstance(exc, URLError) else exc
+
+        if isinstance(reason, (TimeoutError, socket.timeout)):
+            failure_type = "timeout"
+        else:
+            failure_type = "connection_error"
+
         error = str(exc)
 
     elapsed_ms = (time.perf_counter() - start) * 1000
@@ -29,7 +47,9 @@ def probe_once(url, timeout):
         "status": status,
         "latency_ms": round(elapsed_ms, 3),
         "error": error,
+        "failure_type": failure_type,
     }
+
 
 
 def analyse_results(observations):
