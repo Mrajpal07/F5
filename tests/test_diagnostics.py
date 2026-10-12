@@ -108,3 +108,67 @@ def test_server_error_diagnostic():
     assert result["category"] == "http_error"
     assert "HTTP status: 503." in result["evidence"]
     assert "5xx" in result["assessment"]
+
+
+
+def test_connection_error_includes_recommended_checks():
+    result = diagnose_probe_result({
+        "status": None,
+        "latency_ms": 2.0,
+        "error": "Connection refused",
+        "failure_type": "connection_error",
+    })
+
+    checks = result["recommended_checks"]
+    assert len(checks) > 0
+    assert any("listening" in check for check in checks)
+
+
+def test_timeout_includes_recommended_checks():
+    result = diagnose_probe_result({
+        "status": None,
+        "latency_ms": 1000.0,
+        "error": "timed out",
+        "failure_type": "timeout",
+    })
+
+    checks = result["recommended_checks"]
+    assert len(checks) > 0
+    assert any("response times" in check.lower() for check in checks)
+
+
+def test_redirect_includes_recommended_checks():
+    result = diagnose_probe_result({
+        "status": 302,
+        "latency_ms": 5.0,
+        "error": "HTTP Error 302: Redirect blocked",
+        "failure_type": "http_error",
+    })
+
+    checks = result["recommended_checks"]
+    assert any("location" in check.lower() for check in checks)
+
+
+def test_server_error_includes_recommended_checks():
+    result = diagnose_probe_result({
+        "status": 503,
+        "latency_ms": 5.0,
+        "error": "HTTP Error 503: Service Unavailable",
+        "failure_type": "http_error",
+    })
+
+    checks = result["recommended_checks"]
+    assert any("logs" in check.lower() for check in checks)
+
+
+def test_healthy_result_includes_recommended_checks():
+    result = diagnose_probe_result({
+        "status": 200,
+        "latency_ms": 2.0,
+        "error": None,
+        "failure_type": None,
+    })
+
+    checks = result["recommended_checks"]
+    assert len(checks) > 0
+    assert any("monitoring" in check.lower() for check in checks)
