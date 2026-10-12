@@ -1,15 +1,17 @@
 
 from datetime import datetime, timezone
+from urllib.parse import urlsplit
 
-from fastapi import FastAPI
-from pydantic import BaseModel, Field
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel, Field, field_validator
 
 from app.diagnostics.engine import diagnose_probe_result
+from app.probes.http_probe import probe_once
 
 app = FastAPI(
     title="NetReliant",
     description="Network reliability and diagnostics lab",
-    version="0.2.0",
+    version="0.3.0",
 )
 
 
@@ -18,6 +20,34 @@ class ProbeObservation(BaseModel):
     latency_ms: float = Field(ge=0)
     error: str | None = None
     failure_type: str | None = None
+
+
+class ProbeRequest(BaseModel):
+    url: str
+    timeout: float = Field(default=2.0, gt=0, le=5.0)
+
+    @field_validator("url")
+    @classmethod
+    def restrict_to_local_targets(cls, value: str) -> str:
+        try:
+            parsed = urlsplit(value)
+            port = parsed.port
+        except ValueError as exc:
+            raise ValueError("Invalid target URL") from exc
+
+        if (
+            parsed.scheme != "http"
+            or parsed.hostname not in {"localhost", "127.0.0.1"}
+            or parsed.username is not None
+            or parsed.password is not None
+            or not parsed.path
+            or port == 0
+        ):
+            raise ValueError(
+                "Only HTTP URLs targeting localhost or 127.0.0.1 are allowed"
+            )
+
+        return value
 
 
 @app.get("/")
@@ -36,9 +66,20 @@ def health():
 
 @app.post("/diagnostics/analyse")
 def analyse(observation: ProbeObservation):
-    """Analyse a probe observation and return a structured finding."""
     result = diagnose_probe_result(observation.model_dump())
     return {
         "target_observation": observation.model_dump(),
         "diagnostic": result,
+    }
+
+
+@app.post("/diagnostics/probe")
+def probe_and_diagnose(request: ProbeRequest):
+    observation = probe_once(request.url, request.timeout)
+    diagnostic = diagnose_probe_result(observation)
+
+    return {
+        "target": request.url,
+        "observation": observation,
+        "diagnostic": diagnostic,
     }
