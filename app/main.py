@@ -7,11 +7,25 @@ from pydantic import BaseModel, Field, field_validator
 
 from app.diagnostics.engine import diagnose_probe_result
 from app.probes.http_probe import probe_once
+from contextlib import asynccontextmanager
+
+from app.history.store import (
+    initialize_database,
+    record_probe,
+    get_probe_history,
+)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    initialize_database()
+    yield
+
 
 app = FastAPI(
     title="NetReliant",
     description="Network reliability and diagnostics lab",
     version="0.3.0",
+    lifespan=lifespan,
 )
 
 
@@ -78,8 +92,31 @@ def probe_and_diagnose(request: ProbeRequest):
     observation = probe_once(request.url, request.timeout)
     diagnostic = diagnose_probe_result(observation)
 
+    record_id = record_probe(
+        request.url,
+        observation,
+        diagnostic,
+    )
+
     return {
+        "record_id": record_id,
         "target": request.url,
         "observation": observation,
         "diagnostic": diagnostic,
+    }
+
+@app.get("/diagnostics/history")
+def probe_history(
+    url: str,
+    limit: int = 50,
+):
+    try:
+        records = get_probe_history(url, limit=limit)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    return {
+        "target": url,
+        "count": len(records),
+        "records": records,
     }

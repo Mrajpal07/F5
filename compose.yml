@@ -1,8 +1,9 @@
-
 services:
   api:
     build: .
     container_name: netreliant-api
     ports:
       - "8000:8000"
+    volumes:
+      - ./data:/app/data
     restart: unless-stopped

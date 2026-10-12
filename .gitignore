@@ -6,3 +6,6 @@ __pycache__/
 .pytest_cache/
 .coverage
 htmlcov/
+# Local SQLite databases
+data/*.db
+data/*.sqlite*
