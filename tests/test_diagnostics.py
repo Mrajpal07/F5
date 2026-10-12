@@ -67,3 +67,44 @@ def test_unknown_result_requests_more_evidence():
     assert "Collect additional evidence before drawing a conclusion." == (
         result["assessment"]
     )
+
+
+
+def test_redirect_diagnostic():
+    result = diagnose_probe_result({
+        "status": 302,
+        "latency_ms": 5.0,
+        "error": "HTTP Error 302: Redirect blocked",
+        "failure_type": "http_error",
+    })
+
+    assert result["category"] == "http_error"
+    assert "HTTP status: 302." in result["evidence"]
+    assert any("redirect" in item.lower() for item in result["evidence"])
+    assert "redirected" in result["assessment"].lower()
+
+
+def test_client_error_diagnostic():
+    result = diagnose_probe_result({
+        "status": 404,
+        "latency_ms": 5.0,
+        "error": "HTTP Error 404: Not Found",
+        "failure_type": "http_error",
+    })
+
+    assert result["category"] == "http_error"
+    assert "HTTP status: 404." in result["evidence"]
+    assert "4xx" in result["assessment"]
+
+
+def test_server_error_diagnostic():
+    result = diagnose_probe_result({
+        "status": 503,
+        "latency_ms": 5.0,
+        "error": "HTTP Error 503: Service Unavailable",
+        "failure_type": "http_error",
+    })
+
+    assert result["category"] == "http_error"
+    assert "HTTP status: 503." in result["evidence"]
+    assert "5xx" in result["assessment"]

@@ -32,18 +32,45 @@ def diagnose_probe_result(result):
             ),
         }
 
+
     if failure_type == "http_error" or (
         status is not None and not 200 <= status < 300
     ):
+        evidence = [f"HTTP status: {status}."]
+
+        if status is not None and 300 <= status < 400:
+            evidence.append(
+                "The server returned a redirect response. "
+                "The probe did not follow the redirect."
+            )
+            assessment = (
+                "The endpoint redirected the request. Verify whether "
+                "the redirect is expected and whether the client should "
+                "follow it."
+            )
+        elif status is not None and status >= 500:
+            assessment = (
+                "The server returned a 5xx response, indicating a "
+                "server-side failure. Inspect server and application logs."
+            )
+        elif status is not None and status >= 400:
+            assessment = (
+                "The server returned a 4xx response. Check the request, "
+                "authentication requirements, and endpoint configuration."
+            )
+        else:
+            assessment = (
+                "An HTTP response indicated an unsuccessful request. "
+                "Inspect the endpoint configuration and response."
+            )
+
         return {
             "category": "http_error",
             "severity": "medium",
-            "evidence": [f"HTTP status: {status}."],
-            "assessment": (
-                "An HTTP response indicated an unsuccessful request. "
-                "Inspect the server and application logs."
-            ),
+            "evidence": evidence,
+            "assessment": assessment,
         }
+
 
     if status is not None and 200 <= status < 300:
         return {
