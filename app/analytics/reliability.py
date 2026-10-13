@@ -1,6 +1,7 @@
 
 import math
 import sqlite3
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from app.history.store import DEFAULT_DB_PATH
@@ -19,14 +20,12 @@ def calculate_percentile(values, percentile):
     return ordered[rank - 1]
 
 
-
 def get_reliability_summary(
     target,
     db_path=DEFAULT_DB_PATH,
     window_hours=24,
 ):
     """Summarize probe reliability within a recent time window."""
-    from datetime import datetime, timedelta, timezone
 
     if not 1 <= window_hours <= 168:
         raise ValueError("window_hours must be between 1 and 168")
@@ -39,7 +38,7 @@ def get_reliability_summary(
     with sqlite3.connect(db_path) as connection:
         rows = connection.execute(
             """
-            SELECT status, latency_ms
+            SELECT status, latency_ms, failure_type
             FROM probe_history
             WHERE target = ? AND timestamp >= ?
             ORDER BY timestamp ASC, id ASC
@@ -48,15 +47,27 @@ def get_reliability_summary(
         ).fetchall()
 
     total_probes = len(rows)
+
     successful_latencies = [
         latency_ms
-        for status, latency_ms in rows
+        for status, latency_ms, _ in rows
         if status is not None and 200 <= status < 300
     ]
+
     successful_probes = len(successful_latencies)
     failed_probes = total_probes - successful_probes
 
-    latencies = [latency_ms for _, latency_ms in rows]
+    latencies = [latency_ms for _, latency_ms, _ in rows]
+
+    failure_counts = {}
+
+    for status, _, failure_type in rows:
+        is_success = status is not None and 200 <= status < 300
+
+        if not is_success and failure_type:
+            failure_counts[failure_type] = (
+                failure_counts.get(failure_type, 0) + 1
+            )
 
     return {
         "target": target,
@@ -80,4 +91,5 @@ def get_reliability_summary(
             else None
         ),
         "p95_latency_ms": calculate_percentile(latencies, 95),
+        "failure_counts": failure_counts,
     }

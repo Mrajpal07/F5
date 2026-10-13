@@ -113,3 +113,26 @@ def test_reliability_summary_rejects_invalid_window(tmp_path):
             db_path,
             window_hours=0,
         )
+
+def test_reliability_summary_breaks_down_failure_types(tmp_path):
+    db_path = tmp_path / "test.db"
+    target = "http://localhost:8000/health"
+
+    create_test_database(
+        db_path,
+        [
+            (target, 200, 10.0, None),
+            (target, 500, 30.0, "http_error"),
+            (target, None, 40.0, "connection_error"),
+            (target, None, 50.0, "connection_error"),
+            (target, None, 60.0, "timeout"),
+        ],
+    )
+
+    result = get_reliability_summary(target, db_path)
+
+    assert result["failure_counts"] == {
+        "http_error": 1,
+        "connection_error": 2,
+        "timeout": 1,
+    }
