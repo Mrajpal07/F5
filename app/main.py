@@ -2,14 +2,25 @@
 from datetime import datetime, timezone
 from urllib.parse import urlsplit
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
 
 from app.diagnostics.engine import diagnose_probe_result
 from app.probes.http_probe import probe_once
+from app.probes.dns_probe import dns_probe
+from app.probes.tcp_probe import tcp_probe
 from contextlib import asynccontextmanager
 from app.analytics.reliability import get_reliability_summary
 from app.analytics.anomaly import detect_latency_anomaly
+from app.incidents.manager import IncidentManager
+
+from app.incidents.store import (
+    get_incident_history,
+    load_active_incidents,
+    get_incident_by_id,
+)
+from app.incidents.manager import Incident
+import sqlite3
 
 from app.history.store import (
     initialize_database,
@@ -20,6 +31,7 @@ from app.history.store import (
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     initialize_database()
+    app.state.incident_manager = IncidentManager()
     yield
 
 
@@ -89,23 +101,80 @@ def analyse(observation: ProbeObservation):
     }
 
 
-@app.post("/diagnostics/probe")
-def probe_and_diagnose(request: ProbeRequest):
-    observation = probe_once(request.url, request.timeout)
-    diagnostic = diagnose_probe_result(observation)
 
+
+@app.post("/diagnostics/probe")
+
+def probe_and_diagnose(
+    request: ProbeRequest,
+    http_request: Request,
+):
+    parsed_url = urlsplit(request.url)
+    host = parsed_url.hostname
+    port = parsed_url.port or 80
+
+    # Collect DNS evidence.
+    dns_result = dns_probe(host)
+
+    # Collect TCP evidence.
+    tcp_result = tcp_probe(host, port, timeout=request.timeout)
+
+    # Preserve the existing HTTP observation.
+    observation = probe_once(request.url, request.timeout)
+
+    # Combine network-layer evidence with the HTTP observation.
+    diagnostic = diagnose_probe_result(
+        observation,
+        network_results={
+            "dns": dns_result,
+            "tcp": tcp_result,
+        },
+    )
+
+    # Persist the observation before calculating its latency anomaly.
     record_id = record_probe(
         request.url,
         observation,
         diagnostic,
     )
 
+    # Compare the latest successful probe against its historical baseline.
+    latency_anomaly = detect_latency_anomaly(request.url)
+
+    # Only an explicit True counts as a latency anomaly.
+    is_anomaly = latency_anomaly.get("is_anomaly")
+
+    incident = http_request.app.state.incident_manager.process_observation(
+        request.url,
+        observation,
+        is_anomaly=is_anomaly,
+    )
+
+    incident_event = None
+
+    if incident is not None:
+        incident_event = {
+            "incident_id": incident.incident_id,
+            "category": incident.category,
+            "severity": incident.severity,
+            "status": incident.status,
+        }
+
+
     return {
         "record_id": record_id,
         "target": request.url,
+        "network_results": {
+            "dns": dns_result,
+            "tcp": tcp_result,
+        },
         "observation": observation,
         "diagnostic": diagnostic,
+        "latency_anomaly": latency_anomaly,
+        "incident_event": incident_event,
     }
+
+
 
 @app.get("/diagnostics/history")
 def probe_history(
@@ -162,3 +231,54 @@ def latency_anomaly(
         ) from exc
 
     return result
+
+
+@app.get("/incidents")
+def list_active_incidents():
+    incidents = load_active_incidents()
+    return {
+        "count": len(incidents),
+        "incidents": incidents,
+    }
+
+
+@app.get("/incidents/history")
+def list_incident_history(
+    status: str | None = None,
+    url: str | None = None,
+    limit: int = 50,
+):
+    try:
+        incidents = get_incident_history(
+            status=status,
+            target=url,
+            limit=limit,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=str(exc),
+        ) from exc
+
+    return {
+        "count": len(incidents),
+        "incidents": incidents,
+    }
+
+@app.get("/incidents/{incident_id}")
+def get_incident(incident_id: int):
+    try:
+        incident = get_incident_by_id(incident_id)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=str(exc),
+        ) from exc
+
+    if incident is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Incident not found",
+        )
+
+    return incident

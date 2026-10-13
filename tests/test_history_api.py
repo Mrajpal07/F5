@@ -43,6 +43,31 @@ def test_probe_records_history(monkeypatch, tmp_path):
             "failure_type": None,
         },
     )
+    monkeypatch.setattr(
+        main_module,
+        "dns_probe",
+        lambda host: {
+            "host": host,
+            "resolved": True,
+            "addresses": ["127.0.0.1"],
+            "latency_ms": 0.1,
+            "error": None,
+            "failure_type": None,
+        },
+    )
+
+    monkeypatch.setattr(
+        main_module,
+        "tcp_probe",
+        lambda host, port, timeout=2.0: {
+            "host": host,
+            "port": port,
+            "connected": True,
+            "latency_ms": 0.2,
+            "error": None,
+            "failure_type": None,
+        },
+    )
 
     with TestClient(main_module.app) as client:
         target = "http://127.0.0.1:8000/health"
